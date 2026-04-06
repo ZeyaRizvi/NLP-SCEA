@@ -1,10 +1,10 @@
-# Smart Electricity Complaint Analyzer
+# Smart Electricity Complaint Analyzer  
 
 An **AI-powered NLP web application** that analyzes electricity-related complaints and converts them into structured insights such as **issue type**, **location**, **priority**, and **suggested action**.  
 The system uses a **hybrid NLP approach** combining a **transformer-based model** (HuggingFace / DistilBERT embeddings) and **rule-based logic** for reliability.
 
 ---
-
+Preview - https://nlp-scea.vercel.app/
 ## Tech Stack
 
 - **Frontend**: React (Vite)
