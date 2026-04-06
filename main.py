@@ -21,9 +21,12 @@ def create_app() -> FastAPI:
     # Fallback: some test/dev environments may not trigger lifespan startup reliably.
     # Creating the schema eagerly keeps the API functional.
     init_db()
+    origins = [
+        "https://nlp-scea.vercel.app",
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
