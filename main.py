@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database.complaints_db import init_db
 
-from routes.analyze import router as analyze_router
+from nlp.pipeline import preload_transformer_assets
+from routes.analyze import get_analyzer, router as analyze_router
 from routes.root import router as root_router
 from routes.complaints import router as complaints_router
 
@@ -15,6 +16,9 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         # Ensure SQLite schema exists before serving requests.
         init_db()
+        # Load Hugging Face weights once; warm analyzer so first request is not blocked.
+        preload_transformer_assets()
+        get_analyzer()
         yield
 
     app = FastAPI(title="Smart Electricity Complaint Analyzer", lifespan=lifespan)

@@ -5,11 +5,46 @@ import math
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from transformers import AutoModel, AutoTokenizer
+
 
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[^a-zA-Z0-9\s]")
 _DURATION_RE = re.compile(r"(\d+)\s*(hour|hr|hrs|hours|minute|min|mins|minutes)\b")
 _DEFAULT_SPACY_MODEL = "en_core_web_sm"
+
+# Loaded once per process (see preload_transformer_assets); reused by all pipeline instances.
+_HF_TOKENIZER: Any = None
+_HF_MODEL: Any = None
+_TORCH: Any = None
+
+
+def preload_transformer_assets(model_name: Optional[str] = None) -> None:
+    """
+    Load Hugging Face tokenizer and model exactly once for this process.
+    Safe to call from app startup and from ElectricityComplaintNLP.__init__ (idempotent).
+    """
+    global _HF_TOKENIZER, _HF_MODEL, _TORCH
+
+    if _HF_TOKENIZER is not None and _HF_MODEL is not None:
+        return
+
+    name = model_name or os.getenv("NLP_CLASSIFIER_MODEL", "distilbert-base-uncased")
+
+    try:
+        torch = importlib.import_module("torch")
+    except Exception:
+        return
+
+    try:
+        _HF_TOKENIZER = AutoTokenizer.from_pretrained(name)
+        _HF_MODEL = AutoModel.from_pretrained(name)
+        _HF_MODEL.eval()
+        _TORCH = torch
+    except Exception:
+        _HF_TOKENIZER = None
+        _HF_MODEL = None
+        _TORCH = None
 
 
 def _normalize_text(text: str) -> str:
@@ -240,22 +275,29 @@ class ElectricityComplaintNLP:
         self._init_ai_classifier()
 
     def _init_ai_classifier(self) -> None:
-        try:
-            transformers = importlib.import_module("transformers")
-            torch = importlib.import_module("torch")
-        except Exception:
+        preload_transformer_assets(self._TRANSFORMER_MODEL_NAME)
+
+        if _HF_TOKENIZER is None or _HF_MODEL is None or _TORCH is None:
+            self._ai_enabled = False
+            self._hf_tokenizer = None
+            self._hf_model = None
+            self._torch = None
+            self._label_embeddings = {}
             return
 
-        try:
-            self._hf_tokenizer = transformers.AutoTokenizer.from_pretrained(self._TRANSFORMER_MODEL_NAME)
-            self._hf_model = transformers.AutoModel.from_pretrained(self._TRANSFORMER_MODEL_NAME)
-            self._hf_model.eval()
-            self._torch = torch
+        self._hf_tokenizer = _HF_TOKENIZER
+        self._hf_model = _HF_MODEL
+        self._torch = _TORCH
 
+        try:
             # Cache label embeddings once for fast repeated inference.
-            self._label_embeddings = {
-                label: self._embed_text(proto) for label, proto in self._LABEL_PROTOTYPES.items()
-            }
+            label_embeddings: Dict[str, Any] = {}
+            for label, proto in self._LABEL_PROTOTYPES.items():
+                vec = self._embed_text(proto)
+                if vec is None:
+                    raise ValueError("prototype embedding failed")
+                label_embeddings[label] = vec
+            self._label_embeddings = label_embeddings
             self._ai_enabled = True
         except Exception:
             self._ai_enabled = False
@@ -264,24 +306,30 @@ class ElectricityComplaintNLP:
             self._torch = None
             self._label_embeddings = {}
 
-    def _embed_text(self, text: str) -> Any:
+    def _embed_text(self, text: str) -> Optional[Any]:
         """
         Mean-pool token embeddings from DistilBERT using attention mask,
         then L2-normalize vector for stable cosine-style similarity.
+        Returns None if tokenizer/model/torch is missing or inference fails.
         """
-        encoded = self._hf_tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128)
-        with self._torch.no_grad():
-            outputs = self._hf_model(**encoded)
-        # outputs.last_hidden_state shape: [batch, seq, hidden]
-        token_embeddings = outputs.last_hidden_state
-        attention_mask = encoded["attention_mask"].unsqueeze(-1).expand(token_embeddings.size()).float()
+        if self._hf_tokenizer is None or self._hf_model is None or self._torch is None:
+            return None
+        try:
+            encoded = self._hf_tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128)
+            with self._torch.no_grad():
+                outputs = self._hf_model(**encoded)
+            # outputs.last_hidden_state shape: [batch, seq, hidden]
+            token_embeddings = outputs.last_hidden_state
+            attention_mask = encoded["attention_mask"].unsqueeze(-1).expand(token_embeddings.size()).float()
 
-        summed = (token_embeddings * attention_mask).sum(dim=1)
-        counts = attention_mask.sum(dim=1).clamp(min=1e-9)
-        mean_pooled = summed / counts
+            summed = (token_embeddings * attention_mask).sum(dim=1)
+            counts = attention_mask.sum(dim=1).clamp(min=1e-9)
+            mean_pooled = summed / counts
 
-        normalized = self._torch.nn.functional.normalize(mean_pooled, p=2, dim=1)
-        return normalized.squeeze(0)
+            normalized = self._torch.nn.functional.normalize(mean_pooled, p=2, dim=1)
+            return normalized.squeeze(0)
+        except Exception:
+            return None
 
     def _classify_issue_ai(self, text: str) -> Optional[ClassificationResult]:
         if not self._ai_enabled:
@@ -289,12 +337,19 @@ class ElectricityComplaintNLP:
 
         try:
             text_vec = self._embed_text(text)
+            if text_vec is None:
+                return None
             sims: List[Tuple[str, float]] = []
             for label in self.ISSUE_TYPES:
-                label_vec = self._label_embeddings[label]
+                label_vec = self._label_embeddings.get(label)
+                if label_vec is None:
+                    return None
                 # Both vectors are already normalized, so dot product equals cosine similarity.
                 sim = float(self._torch.dot(text_vec, label_vec).item())
                 sims.append((label, sim))
+
+            if not sims:
+                return None
 
             # Convert similarities to pseudo-probabilities via stable softmax.
             max_sim = max(s for _, s in sims)
@@ -409,9 +464,12 @@ class ElectricityComplaintNLP:
         return ClassificationResult(issue_type=best_issue, score=confidence, matched_keywords=best_matches)
 
     def classify_issue(self, text: str) -> ClassificationResult:
-        ai_result = self._classify_issue_ai(text)
-        if ai_result and ai_result.score >= self._AI_CONFIDENCE_THRESHOLD:
-            return ai_result
+        try:
+            ai_result = self._classify_issue_ai(text)
+            if ai_result and ai_result.score >= self._AI_CONFIDENCE_THRESHOLD:
+                return ai_result
+        except Exception:
+            pass
         return self._classify_issue_keyword(text)
 
     def extract_location_and_issue(self, text: str) -> Dict[str, object]:
