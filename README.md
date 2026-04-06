@@ -197,14 +197,16 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 
 ## Screenshots
 
-> Add screenshots of the UI here.
-
 - **Dashboard (Dark Mode)**
-  - _Screenshot placeholder_
+- <img width="1259" height="802" alt="Screenshot 2026-04-07 at 1 37 56 AM" src="https://github.com/user-attachments/assets/26a2eb1d-714a-40cc-b5b0-162cd327f8c9" />
+
+
 - **Analysis Output + Highlighted Text**
-  - _Screenshot placeholder_
+- <img width="667" height="320" alt="Screenshot 2026-04-07 at 1 41 08 AM" src="https://github.com/user-attachments/assets/7fa6fe51-a9e2-4a17-b4fd-27e73c3c40e8" />
+
 - **Charts (Priority + Issue Types)**
-  - _Screenshot placeholder_
+- <img width="497" height="365" alt="Screenshot 2026-04-07 at 1 42 09 AM" src="https://github.com/user-attachments/assets/60a5d32e-29b6-42c9-a888-c85643cf7229" />
+
 
 ---
 
