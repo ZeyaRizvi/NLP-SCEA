@@ -146,7 +146,8 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-Backend will be available at:
+Backend deployed at: Render
+https://nlp-scea.onrender.com
 - `http://127.0.0.1:8000`
 - Docs: `http://127.0.0.1:8000/docs`
 
@@ -158,7 +159,8 @@ npm install
 npm run dev
 ```
 
-Frontend will be available at:
+Frontend will be available at: Vercel
+https://nlp-scea.vercel.app/
 - `http://127.0.0.1:5173` (default Vite port)
 
 ---
